@@ -19,6 +19,31 @@ and secures it with **Cortex Cloud** (KSPM + realtime protection).
 
 ---
 
+## Optional: run this guide as an app
+
+Everything below also works as a local web app instead of copy-pasting
+commands from this file. `app/` turns this guide into a step-by-step
+runbook — one step per screen, each with an explanation, a **Run** button for
+the automatable steps (tool check, credentials, `validate.sh`,
+`deploy-part1.sh`, `deploy-part2.sh`, uploading the Cortex installer files,
+`delete.sh`) with live output, and a clearly marked **"Do this yourself"**
+callout for anything that genuinely needs a console or an interactive shell
+(Cortex Cloud onboarding, SSM sessions, RDP) — with instance IDs, the cluster
+name and the bucket name resolved for you where possible.
+
+```bash
+cd app
+npm install
+npm start
+```
+
+Then open http://localhost:4848. AWS credentials you paste in are held only in
+the app's local server process for that session — never written to disk. If
+you also use a separate terminal for the manual steps (SSM sessions, RDP),
+export the same credentials there too (step 1 below).
+
+---
+
 ## Working as a group of two or 4
 
 You share one AWS account and one Cortex tenant view, so **only one person runs

@@ -59,7 +59,50 @@ function updateCmd(container, id, text) {
 }
 
 // Runs an action on the server and streams its output into a <div class="terminal">.
-function runAction(container, { endpoint, body, start, runBtnSel, terminalSel, statusSel, onDone }) {
+// Opens (or re-opens) the SSE stream for a runId and wires it into a step's
+// terminal/button/status elements. The server replays a run's full buffered
+// output on connect regardless of whether it's still going or long finished —
+// that's what lets re-entering a step restore everything it printed earlier,
+// even after the run has completed.
+function attachRun(container, runId, { runBtnSel, terminalSel, statusSel, onDone }) {
+  const runBtn = qs(container, runBtnSel);
+  const terminal = qs(container, terminalSel);
+  const status = statusSel ? qs(container, statusSel) : null;
+
+  runBtn.disabled = true;
+  terminal.textContent = '';
+  if (status) { status.textContent = 'running'; status.className = 'run-status running'; }
+
+  const es = new EventSource(`/api/run/${runId}/stream`);
+  es.addEventListener('data', (ev) => {
+    const { stream, text } = JSON.parse(ev.data);
+    const span = document.createElement('span');
+    span.className = stream === 'err' ? 'line err' : 'line';
+    span.textContent = text;
+    terminal.appendChild(span);
+    terminal.scrollTop = terminal.scrollHeight;
+  });
+  es.addEventListener('done', (ev) => {
+    const { status: runStatus } = JSON.parse(ev.data);
+    es.close();
+    runBtn.disabled = false;
+    if (status) {
+      status.textContent = runStatus === 'success' ? 'done' : 'failed';
+      status.className = `run-status ${runStatus}`;
+    }
+    if (onDone) onDone(runStatus);
+  });
+  es.onerror = () => {
+    es.close();
+    runBtn.disabled = false;
+    if (status) { status.textContent = 'connection lost'; status.className = 'run-status failed'; }
+  };
+}
+
+// Starts a new run. If `key` is given, the resulting runId is remembered in
+// state.runs so resumeRun() can restore this exact run's output after the
+// user navigates away from this step and back.
+function runAction(container, { endpoint, body, start, key, runBtnSel, terminalSel, statusSel, onDone }) {
   const runBtn = qs(container, runBtnSel);
   const terminal = qs(container, terminalSel);
   const status = statusSel ? qs(container, statusSel) : null;
@@ -71,31 +114,8 @@ function runAction(container, { endpoint, body, start, runBtnSel, terminalSel, s
   const starter = start ? start() : api(endpoint, { method: 'POST', body: JSON.stringify(body || {}) });
   starter
     .then(({ runId }) => {
-      const es = new EventSource(`/api/run/${runId}/stream`);
-      if (status) { status.textContent = 'running'; status.className = 'run-status running'; }
-      es.addEventListener('data', (ev) => {
-        const { stream, text } = JSON.parse(ev.data);
-        const span = document.createElement('span');
-        span.className = stream === 'err' ? 'line err' : 'line';
-        span.textContent = text;
-        terminal.appendChild(span);
-        terminal.scrollTop = terminal.scrollHeight;
-      });
-      es.addEventListener('done', (ev) => {
-        const { status: runStatus } = JSON.parse(ev.data);
-        es.close();
-        runBtn.disabled = false;
-        if (status) {
-          status.textContent = runStatus === 'success' ? 'done' : 'failed';
-          status.className = `run-status ${runStatus}`;
-        }
-        if (onDone) onDone(runStatus);
-      });
-      es.onerror = () => {
-        es.close();
-        runBtn.disabled = false;
-        if (status) { status.textContent = 'connection lost'; status.className = 'run-status failed'; }
-      };
+      if (key) state.runs[key] = runId;
+      attachRun(container, runId, { runBtnSel, terminalSel, statusSel, onDone });
     })
     .catch((err) => {
       runBtn.disabled = false;
@@ -107,6 +127,15 @@ function runAction(container, { endpoint, body, start, runBtnSel, terminalSel, s
     });
 }
 
+// Call after wiring up a step's run button(s) to restore a previous run's
+// output, if one was started earlier in this browser session. No-op if
+// nothing was ever run for this key.
+function resumeRun(container, key, opts) {
+  const runId = state.runs[key];
+  if (!runId) return;
+  attachRun(container, runId, opts);
+}
+
 // ---------------------------------------------------------------------------
 // global state
 // ---------------------------------------------------------------------------
@@ -115,6 +144,7 @@ const state = {
   creds: { set: false },
   manualDone: new Set(),
   activeId: 'prereqs',
+  runs: {}, // step key -> runId, so switching steps and back restores output
 };
 
 async function refreshTopbar() {
@@ -364,10 +394,9 @@ const STEPS = [
             <div class="terminal" id="term"></div>
           </div>
         </div>`;
-      qs(c, '#run-btn').addEventListener('click', () => runAction(c, {
-        endpoint: '/api/actions/validate',
-        runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
-      }));
+      const opts = { key: 'validate', runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status' };
+      qs(c, '#run-btn').addEventListener('click', () => runAction(c, { endpoint: '/api/actions/validate', ...opts }));
+      resumeRun(c, 'validate', opts);
     },
   },
 
@@ -397,11 +426,12 @@ const STEPS = [
             </table>
           </div>
         </div>`;
-      qs(c, '#run-btn').addEventListener('click', () => runAction(c, {
-        endpoint: '/api/actions/deploy-part1',
-        runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
+      const opts = {
+        key: 'deploy-part1', runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
         onDone: () => qs(c, '#refresh-status').click(),
-      }));
+      };
+      qs(c, '#run-btn').addEventListener('click', () => runAction(c, { endpoint: '/api/actions/deploy-part1', ...opts }));
+      resumeRun(c, 'deploy-part1', opts);
       qs(c, '#refresh-status').addEventListener('click', async () => {
         try {
           const { stacks } = await api('/api/stacks/status');
@@ -513,11 +543,12 @@ const STEPS = [
             </table>
           </div>
         </div>`;
-      qs(c, '#run-btn').addEventListener('click', () => runAction(c, {
-        endpoint: '/api/actions/deploy-part2',
-        runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
+      const opts = {
+        key: 'deploy-part2', runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
         onDone: () => qs(c, '#refresh-status').click(),
-      }));
+      };
+      qs(c, '#run-btn').addEventListener('click', () => runAction(c, { endpoint: '/api/actions/deploy-part2', ...opts }));
+      resumeRun(c, 'deploy-part2', opts);
       qs(c, '#refresh-status').addEventListener('click', async () => {
         try {
           const { stacks } = await api('/api/stacks/status');
@@ -654,24 +685,22 @@ const STEPS = [
         }
       });
 
+      const optsValues = { key: 'upload-chart:values', runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status' };
+      const optsAuth = { key: 'upload-chart:auth', runBtnSel: '#run-btn-2', terminalSel: '#term-2', statusSel: '#run-status-2' };
       qs(c, '#run-btn').addEventListener('click', () => {
         if (!bucket) return alert('Resolve the transfer bucket first.');
         const file = qs(c, '#f-chart').files[0];
         if (!file) return alert('Choose a values.yaml file first.');
-        runAction(c, {
-          start: () => apiUpload('/api/actions/upload-cortex-file', file, { bucket }),
-          runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
-        });
+        runAction(c, { start: () => apiUpload('/api/actions/upload-cortex-file', file, { bucket }), ...optsValues });
       });
       qs(c, '#run-btn-2').addEventListener('click', () => {
         if (!bucket) return alert('Resolve the transfer bucket first.');
         const file = qs(c, '#f-values').files[0];
         if (!file) return alert('Choose an auth.json file first.');
-        runAction(c, {
-          start: () => apiUpload('/api/actions/upload-cortex-file', file, { bucket }),
-          runBtnSel: '#run-btn-2', terminalSel: '#term-2', statusSel: '#run-status-2',
-        });
+        runAction(c, { start: () => apiUpload('/api/actions/upload-cortex-file', file, { bucket }), ...optsAuth });
       });
+      resumeRun(c, 'upload-chart:values', optsValues);
+      resumeRun(c, 'upload-chart:auth', optsAuth);
     },
   },
 
@@ -763,11 +792,15 @@ const STEPS = [
       qs(c, '#confirm-delete').addEventListener('change', (e) => {
         qs(c, '#run-btn').disabled = !e.target.checked;
       });
-      qs(c, '#run-btn').addEventListener('click', () => runAction(c, {
-        endpoint: '/api/actions/delete',
-        body: { confirm: true },
-        runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
-      }));
+      // Re-apply the checkbox gate after a run finishes (fresh or resumed) —
+      // the checkbox itself isn't remembered across steps, so without this a
+      // resumed completed run would leave Delete clickable with no re-confirm.
+      const opts = {
+        key: 'teardown', runBtnSel: '#run-btn', terminalSel: '#term', statusSel: '#run-status',
+        onDone: () => { qs(c, '#run-btn').disabled = !qs(c, '#confirm-delete').checked; },
+      };
+      qs(c, '#run-btn').addEventListener('click', () => runAction(c, { endpoint: '/api/actions/delete', body: { confirm: true }, ...opts }));
+      resumeRun(c, 'teardown', opts);
     },
   },
 ];
