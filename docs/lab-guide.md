@@ -96,9 +96,9 @@ Use **Git Bash** for every command in this guide (not PowerShell or CMD).
        default `%PROGRAMFILES%\Amazon\SessionManagerPlugin\bin\` location.
 4. **Python 3** — https://www.python.org/downloads/windows/
    ✅ On the first installer screen, tick **"Add python.exe to PATH."**
-5. **cfn-lint** — in Git Bash:
+5. **cfn-lint and PyYAML** — in Git Bash:
    ```bash
-   python -m pip install --user cfn-lint
+   python -m pip install --user cfn-lint pyyaml
    ```
 
 > Tip: after installing, **close and reopen Git Bash** so the new tools are on
@@ -114,7 +114,7 @@ Use the built-in **Terminal** (or iTerm). The easiest path is [Homebrew](https:/
 
 brew install awscli python git
 brew install --cask session-manager-plugin
-python3 -m pip install --user cfn-lint
+python3 -m pip install --user cfn-lint pyyaml
 ```
 
 `git` is also available via Xcode Command Line Tools if you prefer
